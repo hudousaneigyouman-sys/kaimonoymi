@@ -844,8 +844,8 @@
 
   function enableStoreReordering(wrap){
     let draggedId = null;
-    let pointerDragId = null;
-    let pointerRow = null;
+    let touchSourceId = null;
+    let touchRow = null;
 
     wrap.querySelectorAll('.store-manage-row').forEach(row => {
       row.addEventListener('dragstart', e => {
@@ -877,51 +877,55 @@
       });
 
       const handle = row.querySelector('.drag-handle');
+
       handle.addEventListener('pointerdown', e => {
         if(e.pointerType === 'mouse') return;
-        pointerDragId = row.dataset.storeId;
-        pointerRow = row;
+        touchSourceId = row.dataset.storeId;
+        touchRow = row;
         row.classList.add('dragging');
         handle.setPointerCapture(e.pointerId);
         e.preventDefault();
       });
 
       handle.addEventListener('pointermove', e => {
-        if(!pointerDragId) return;
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        const target = el && el.closest('.store-manage-row');
+        if(!touchSourceId) return;
+        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.store-manage-row');
         wrap.querySelectorAll('.store-manage-row').forEach(r => r.classList.remove('drag-over'));
-        if(target && target.dataset.storeId !== pointerDragId){
+        if(target && target.dataset.storeId !== touchSourceId){
           target.classList.add('drag-over');
         }
       });
 
-      const finishPointerDrag = e => {
-        if(!pointerDragId) return;
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        const target = el && el.closest('.store-manage-row');
-        const sourceId = pointerDragId;
-        pointerRow?.classList.remove('dragging');
+      const finishTouchDrag = e => {
+        if(!touchSourceId) return;
+        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.store-manage-row');
+        const sourceId = touchSourceId;
+
+        touchRow?.classList.remove('dragging');
         wrap.querySelectorAll('.store-manage-row').forEach(r => r.classList.remove('drag-over'));
-        pointerDragId = null;
-        pointerRow = null;
+
+        touchSourceId = null;
+        touchRow = null;
+
         if(target && target.dataset.storeId !== sourceId){
           reorderStores(sourceId, target.dataset.storeId);
         }
       };
 
-      handle.addEventListener('pointerup', finishPointerDrag);
-      handle.addEventListener('pointercancel', finishPointerDrag);
+      handle.addEventListener('pointerup', finishTouchDrag);
+      handle.addEventListener('pointercancel', finishTouchDrag);
     });
   }
 
   function reorderStores(sourceId, targetId){
     if(!sourceId || !targetId || sourceId === targetId) return;
-    const sourceIndex = data.stores.findIndex(s => s.id === sourceId);
-    const targetIndex = data.stores.findIndex(s => s.id === targetId);
+
+    const sourceIndex = data.stores.findIndex(store => store.id === sourceId);
+    const targetIndex = data.stores.findIndex(store => store.id === targetId);
     if(sourceIndex < 0 || targetIndex < 0) return;
-    const [moved] = data.stores.splice(sourceIndex, 1);
-    data.stores.splice(targetIndex, 0, moved);
+
+    const [movedStore] = data.stores.splice(sourceIndex, 1);
+    data.stores.splice(targetIndex, 0, movedStore);
     saveData();
   }
 
