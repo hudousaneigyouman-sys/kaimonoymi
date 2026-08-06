@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- GitHub Pages向け静的HTML。ビルドツール不要。 -->
+<!-- GitHub Pages向け静的HTML。ビルドツール・初期店舗データ不要。 -->
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
@@ -534,36 +534,16 @@
 (() => {
   const STORAGE_KEY = 'shopping-memo-store-list-v1';
   const BACKUP_KEY = 'shopping-memo-store-list-backup-v1';
-  const DEFAULT_STORE_MIGRATION_KEY = 'shopping-memo-default-stores-seeded-v1';
 
-  const DEFAULT_STORE_NAMES = [
-    'SANWAみなみ野店',
-    'DCM',
-    'セリア',
-    'ダイソー',
-    'ヤオコー',
-    '京王ストア',
-    'ペンギン',
-    'ドラッグストア',
-    'Mr.MAX',
-    'カインズ',
-    'スーパービバホーム',
-    'イーアス高尾',
-    'イオン豊田'
-  ];
 
   const defaultData = {
-    stores: DEFAULT_STORE_NAMES.map((name, index) => ({
-      id:`default-store-${index + 1}`,
-      name
-    })),
+    stores: [],
     items: [],
     itemHistory: [],
-    storeHistory: [...DEFAULT_STORE_NAMES]
+    storeHistory: []
   };
 
   let data = loadData();
-  seedDefaultStoresOnce();
   let currentStoreId = null;
   let selectedStoreIds = new Set();
   let editingItemId = null;
@@ -592,36 +572,6 @@
     renderAll();
   }
 
-  function seedDefaultStoresOnce(){
-    // このバージョンで一度だけデフォルト店舗を追加する。
-    // ユーザーが削除した店舗は、次回起動時に復活させない。
-    if(localStorage.getItem(DEFAULT_STORE_MIGRATION_KEY) === 'done') return;
-
-    let changed = false;
-    DEFAULT_STORE_NAMES.forEach((name, index) => {
-      const exists = data.stores.some(store =>
-        String(store.name || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
-      );
-      if(!exists){
-        data.stores.push({
-          id:`default-store-${index + 1}-${Date.now().toString(36)}`,
-          name
-        });
-        changed = true;
-      }
-      if(!data.storeHistory.some(value =>
-        String(value || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
-      )){
-        data.storeHistory.push(name);
-        changed = true;
-      }
-    });
-
-    if(changed){
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    }
-    localStorage.setItem(DEFAULT_STORE_MIGRATION_KEY, 'done');
-  }
 
 
   function uid(prefix){
