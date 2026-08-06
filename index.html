@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- GitHub Pages向け静的HTML。ビルドツール不要。 -->
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
@@ -269,7 +270,7 @@
     .primary:disabled{opacity:.45;box-shadow:none}
     .store-manage-row{
       display:grid;
-      grid-template-columns:minmax(0,1fr) auto auto;
+      grid-template-columns:44px minmax(0,1fr) auto auto;
       align-items:center;
       gap:8px;
       padding:12px 0;
@@ -277,6 +278,30 @@
     }
     .store-manage-row:last-child{border-bottom:0}
     .store-manage-name{font-weight:800;overflow-wrap:anywhere}
+
+    .drag-handle{
+      width:42px;
+      height:42px;
+      border:1px solid var(--line);
+      background:#fff;
+      border-radius:10px;
+      font-size:1.25rem;
+      color:var(--sub);
+      cursor:grab;
+      touch-action:none;
+      user-select:none;
+    }
+    .drag-handle:active{cursor:grabbing}
+    .store-manage-row.dragging{
+      opacity:.55;
+      background:var(--accent-soft);
+      border-radius:12px;
+    }
+    .store-manage-row.drag-over{
+      outline:2px dashed var(--accent);
+      outline-offset:2px;
+    }
+
     .small-btn{
       border:1px solid var(--line);
       background:#fff;
@@ -463,11 +488,11 @@
     <div class="panel">
       <h2 class="section-title">データ管理</h2>
       <div class="data-actions">
-        <button id="exportBtn" class="secondary">バックアップ保存</button>
-        <button id="importBtn" class="secondary">バックアップ復元</button>
+        <button id="saveBackupBtn" class="secondary">現在の状態をバックアップ</button>
+        <button id="restoreBackupBtn" class="secondary">バックアップから復元</button>
       </div>
-      <input id="importFile" type="file" accept="application/json" hidden />
-      <p class="muted" style="margin-bottom:0">データはこの端末のブラウザ内に保存されます。</p>
+      <p id="backupStatus" class="muted" style="margin-bottom:0"></p>
+      <p class="muted" style="margin-bottom:0">バックアップは端末内に1件だけ保存され、作成するたびに前回分を上書きします。</p>
     </div>
   </section>
 </div>
@@ -508,15 +533,37 @@
 <script>
 (() => {
   const STORAGE_KEY = 'shopping-memo-store-list-v1';
+  const BACKUP_KEY = 'shopping-memo-store-list-backup-v1';
+  const DEFAULT_STORE_MIGRATION_KEY = 'shopping-memo-default-stores-seeded-v1';
+
+  const DEFAULT_STORE_NAMES = [
+    'SANWAみなみ野店',
+    'DCM',
+    'セリア',
+    'ダイソー',
+    'ヤオコー',
+    '京王ストア',
+    'ペンギン',
+    'ドラッグストア',
+    'Mr.MAX',
+    'カインズ',
+    'スーパービバホーム',
+    'イーアス高尾',
+    'イオン豊田'
+  ];
 
   const defaultData = {
-    stores: [],
+    stores: DEFAULT_STORE_NAMES.map((name, index) => ({
+      id:`default-store-${index + 1}`,
+      name
+    })),
     items: [],
     itemHistory: [],
-    storeHistory: []
+    storeHistory: [...DEFAULT_STORE_NAMES]
   };
 
   let data = loadData();
+  seedDefaultStoresOnce();
   let currentStoreId = null;
   let selectedStoreIds = new Set();
   let editingItemId = null;
@@ -544,6 +591,38 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     renderAll();
   }
+
+  function seedDefaultStoresOnce(){
+    // このバージョンで一度だけデフォルト店舗を追加する。
+    // ユーザーが削除した店舗は、次回起動時に復活させない。
+    if(localStorage.getItem(DEFAULT_STORE_MIGRATION_KEY) === 'done') return;
+
+    let changed = false;
+    DEFAULT_STORE_NAMES.forEach((name, index) => {
+      const exists = data.stores.some(store =>
+        String(store.name || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+      );
+      if(!exists){
+        data.stores.push({
+          id:`default-store-${index + 1}-${Date.now().toString(36)}`,
+          name
+        });
+        changed = true;
+      }
+      if(!data.storeHistory.some(value =>
+        String(value || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+      )){
+        data.storeHistory.push(name);
+        changed = true;
+      }
+    });
+
+    if(changed){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+    localStorage.setItem(DEFAULT_STORE_MIGRATION_KEY, 'done');
+  }
+
 
   function uid(prefix){
     return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
@@ -797,7 +876,10 @@
     data.stores.forEach(store => {
       const row = document.createElement('div');
       row.className = 'store-manage-row';
+      row.dataset.storeId = store.id;
+      row.draggable = true;
       row.innerHTML = `
+        <button class="drag-handle" aria-label="ドラッグして並べ替え" title="ドラッグして並べ替え">☰</button>
         <div class="store-manage-name">${escapeHtml(store.name)}</div>
         <button class="small-btn edit-store">名称変更</button>
         <button class="small-btn danger delete-store">削除</button>
@@ -806,6 +888,91 @@
       row.querySelector('.delete-store').addEventListener('click', () => deleteStore(store.id));
       wrap.appendChild(row);
     });
+
+    enableStoreReordering(wrap);
+  }
+
+  function enableStoreReordering(wrap){
+    let draggedId = null;
+    let pointerDragId = null;
+    let pointerRow = null;
+
+    wrap.querySelectorAll('.store-manage-row').forEach(row => {
+      row.addEventListener('dragstart', e => {
+        draggedId = row.dataset.storeId;
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', draggedId);
+      });
+
+      row.addEventListener('dragend', () => {
+        row.classList.remove('dragging');
+        wrap.querySelectorAll('.store-manage-row').forEach(r => r.classList.remove('drag-over'));
+        draggedId = null;
+      });
+
+      row.addEventListener('dragover', e => {
+        e.preventDefault();
+        if(draggedId && draggedId !== row.dataset.storeId){
+          wrap.querySelectorAll('.store-manage-row').forEach(r => r.classList.remove('drag-over'));
+          row.classList.add('drag-over');
+        }
+      });
+
+      row.addEventListener('drop', e => {
+        e.preventDefault();
+        const sourceId = draggedId || e.dataTransfer.getData('text/plain');
+        const targetId = row.dataset.storeId;
+        reorderStores(sourceId, targetId);
+      });
+
+      const handle = row.querySelector('.drag-handle');
+      handle.addEventListener('pointerdown', e => {
+        if(e.pointerType === 'mouse') return;
+        pointerDragId = row.dataset.storeId;
+        pointerRow = row;
+        row.classList.add('dragging');
+        handle.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+
+      handle.addEventListener('pointermove', e => {
+        if(!pointerDragId) return;
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const target = el && el.closest('.store-manage-row');
+        wrap.querySelectorAll('.store-manage-row').forEach(r => r.classList.remove('drag-over'));
+        if(target && target.dataset.storeId !== pointerDragId){
+          target.classList.add('drag-over');
+        }
+      });
+
+      const finishPointerDrag = e => {
+        if(!pointerDragId) return;
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const target = el && el.closest('.store-manage-row');
+        const sourceId = pointerDragId;
+        pointerRow?.classList.remove('dragging');
+        wrap.querySelectorAll('.store-manage-row').forEach(r => r.classList.remove('drag-over'));
+        pointerDragId = null;
+        pointerRow = null;
+        if(target && target.dataset.storeId !== sourceId){
+          reorderStores(sourceId, target.dataset.storeId);
+        }
+      };
+
+      handle.addEventListener('pointerup', finishPointerDrag);
+      handle.addEventListener('pointercancel', finishPointerDrag);
+    });
+  }
+
+  function reorderStores(sourceId, targetId){
+    if(!sourceId || !targetId || sourceId === targetId) return;
+    const sourceIndex = data.stores.findIndex(s => s.id === sourceId);
+    const targetIndex = data.stores.findIndex(s => s.id === targetId);
+    if(sourceIndex < 0 || targetIndex < 0) return;
+    const [moved] = data.stores.splice(sourceIndex, 1);
+    data.stores.splice(targetIndex, 0, moved);
+    saveData();
   }
 
   function renameStore(storeId){
@@ -827,8 +994,8 @@
     if(!store) return;
     const affected = storeCount(storeId);
     const message = affected
-      ? `「${store.name}」を削除しますか？\nこの店舗だけに登録されている商品は買物メモからも削除されます。`
-      : `「${store.name}」を削除しますか？`;
+      ? `本当に「${store.name}」を削除しますか？\n\nこの店舗だけに登録されている商品は、買物メモからも削除されます。\nこの操作は、バックアップから復元しない限り元に戻せません。`
+      : `本当に「${store.name}」を削除しますか？\n\n削除後も、必要になれば店舗管理から再登録できます。`;
     if(!confirm(message)) return;
 
     data.stores = data.stores.filter(s => s.id !== storeId);
@@ -868,38 +1035,63 @@
     box.classList.remove('hidden');
   }
 
-  function exportData(){
-    const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    const d = new Date();
-    const ymd = [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('');
-    a.download = `買物メモ_バックアップ_${ymd}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href),1000);
+  function saveBackup(){
+    try{
+      const backup = {
+        version:1,
+        savedAt:new Date().toISOString(),
+        data:JSON.parse(JSON.stringify(data))
+      };
+      localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+      renderBackupStatus();
+      alert('現在の状態をバックアップしました。前回のバックアップは上書きされました。');
+    }catch(e){
+      alert('バックアップを保存できませんでした。');
+    }
   }
 
-  function importData(file){
-    const reader = new FileReader();
-    reader.onload = () => {
-      try{
-        const parsed = JSON.parse(reader.result);
-        if(!Array.isArray(parsed.stores) || !Array.isArray(parsed.items)) throw new Error();
-        if(!confirm('現在のデータをバックアップ内容で置き換えますか？')) return;
-        data = {
-          stores:parsed.stores,
-          items:parsed.items,
-          itemHistory:Array.isArray(parsed.itemHistory) ? parsed.itemHistory : [],
-          storeHistory:Array.isArray(parsed.storeHistory) ? parsed.storeHistory : []
-        };
-        selectedStoreIds.clear();
-        saveData();
-        alert('復元しました。');
-      }catch(e){
-        alert('正しいバックアップファイルを読み込めませんでした。');
+  function restoreBackup(){
+    const raw = localStorage.getItem(BACKUP_KEY);
+    if(!raw){
+      alert('復元できるバックアップがありません。');
+      return;
+    }
+    try{
+      const backup = JSON.parse(raw);
+      const restored = backup.data;
+      if(!restored || !Array.isArray(restored.stores) || !Array.isArray(restored.items)){
+        throw new Error('invalid backup');
       }
-    };
-    reader.readAsText(file);
+      if(!confirm('現在のデータをバックアップ時点の内容に戻しますか？')) return;
+      data = {
+        stores:restored.stores,
+        items:restored.items,
+        itemHistory:Array.isArray(restored.itemHistory) ? restored.itemHistory : [],
+        storeHistory:Array.isArray(restored.storeHistory) ? restored.storeHistory : []
+      };
+      selectedStoreIds.clear();
+      saveData();
+      alert('バックアップから復元しました。');
+    }catch(e){
+      alert('バックアップデータを読み込めませんでした。');
+    }
+  }
+
+  function renderBackupStatus(){
+    const status = $('backupStatus');
+    if(!status) return;
+    const raw = localStorage.getItem(BACKUP_KEY);
+    if(!raw){
+      status.textContent = '現在、バックアップはありません。';
+      return;
+    }
+    try{
+      const backup = JSON.parse(raw);
+      const d = new Date(backup.savedAt);
+      status.textContent = `最終バックアップ：${d.toLocaleString('ja-JP')}`;
+    }catch(e){
+      status.textContent = 'バックアップ情報を確認できません。';
+    }
   }
 
   function renderAll(){
@@ -909,6 +1101,7 @@
     renderAllItems();
     renderStoreChips();
     renderStoreManager();
+    renderBackupStatus();
   }
 
   document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -961,13 +1154,8 @@
   $('deleteItemBtn').addEventListener('click', deleteEditingItem);
   $('closeDialogBtn').addEventListener('click', () => $('editDialog').close());
 
-  $('exportBtn').addEventListener('click', exportData);
-  $('importBtn').addEventListener('click', () => $('importFile').click());
-  $('importFile').addEventListener('change', e => {
-    const file = e.target.files[0];
-    if(file) importData(file);
-    e.target.value = '';
-  });
+  $('saveBackupBtn').addEventListener('click', saveBackup);
+  $('restoreBackupBtn').addEventListener('click', restoreBackup);
 
   document.addEventListener('click', e => {
     if(!e.target.closest('.field')){
