@@ -1,0 +1,17 @@
+GitHub Pagesへのアップロード手順
+
+1. リポジトリの「Code」画面を開きます。
+2. 既存の index.html を、このフォルダの index.html に置き換えます。
+3. .nojekyll もリポジトリの一番上にアップロードします。
+4. .github フォルダに自作のワークフローがある場合は削除してください。
+   「Settings」→「Pages」で「Deploy from a branch」を使う場合、.github の構築用ワークフローは不要です。
+5. 「Settings」→「Pages」で以下を選びます。
+   Source: Deploy from a branch
+   Branch: main
+   Folder: /(root)
+6. Saveを押し、1～5分ほど待ちます。
+
+注意:
+・デフォルト店舗は、この更新版を初めて開いたときに一度だけ追加されます。
+・削除したデフォルト店舗は、次回起動時に自動復活しません。
+・店舗を削除するときは確認画面が表示されます。
